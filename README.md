@@ -20,7 +20,8 @@
 > 本 fork 早先试过一条不经过 codec 的精简链路（`lite/`），现已移除，改用上游原版流程；历史提交里还能看到。
 
 按下面两小节装对剪映、编出 codec 之后，实测 `doctor` 返回 `runtime_hashes_verified: true`，
-`tools/start_here.py build` 返回 `build-verified`，上游 `export` 导出 60 / 60 帧。`publish` 还没测。
+`tools/start_here.py build` 返回 `build-verified`，上游 `export` 导出 60 / 60 帧；一份 55 秒、10 段视频加 24 条字幕的口播粗剪草稿
+（`edit_plan.py compile` → `from-compiled` → `build` → `verify-build`）导出 1648 / 1648 帧，`publish` 成功登记到剪映首页。
 
 ### 装哪一版剪映（#3、#8 的答案）
 
@@ -99,7 +100,7 @@ install -m 0700 work/codec-build-manual/jy14_codec_hardened_11_4 bridge/
 
 实测（macOS 26.4.1 主机）：产物哈希 `b6533eb5eb1eea58dfa74fb1d16d3bb580970fe881f587605d358af1745f971d`，与上游固定值逐字节一致，
 没有改任何固定哈希。之后 `doctor` 返回 `runtime_hashes_verified: true`，`tools/start_here.py build` 返回 `build-verified`，
-上游的 `export` 导出 60 / 60 帧。`publish` 还没测（需要先完全退出剪映）。
+上游的 `export` 导出 60 / 60 帧，`publish` 也成功（见下表 #5）。
 
 ### 上游 issue / PR 的实测情况
 
@@ -108,7 +109,7 @@ install -m 0700 work/codec-build-manual/jy14_codec_hardened_11_4 bridge/
 | #2 codec 哈希复现不了，PR #4 | 已能复现 | 用苹果公开更新目录里的命令行工具 26.6，见上一小节 |
 | #3 同版本号但库哈希不符 | 已解决 | arm64 包里的库就是 `a282bd76…`，换成通用版 build 13199 后哈希对上 |
 | #8 找不到旧版安装包 | 已解决 | 官方 CDN 上旧版还在，命名规则见“装哪一版剪映” |
-| #5 `publish` 的 `com.apple.macl` 问题，PR #14 | 没测 | 上游已有两人复现，作者未修 |
+| #5 `publish` 的 `com.apple.macl` 问题，PR #14 | 本机没出现 | macOS 26.4.1 上 `publish` 成功，审计里 `os_managed_attribute_changes` 为空、`security_attributes_preserved: true`；上游两位复现者是 26.6.2 和 26.7 |
 | #9 后半 / PR #10 后半：只有 X 位置关键帧时 Y 抖动 | 复现了 | 见下一小节 |
 | #11① 中文路径导出失败，PR #13 | 上游未修 | 工作目录用纯 ASCII 路径即可避开 |
 | #11② MP4 重复 brand 被拒 | 本机没出现 | 本机成片 `major_brand=isom` 是单值 |
