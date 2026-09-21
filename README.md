@@ -103,11 +103,49 @@ https://lv-api.ulikecam.com/service/settings/v3/?app=1&aid=572943&arch_info=arm6
 
 装好后在剪映设置里关掉自动更新，并留一份 dmg，被更新了就重装。
 
+### 要用上游原版命令时：编译 codec（#2 的答案）
+
+lite 方案不需要 codec。只有要跑上游自己的 `build`、`verify`、`edit`、`publish`、`export`（它们都先过 `doctor`，
+缺 codec 就停），或者要读写剪映自己保存的密文草稿时才需要。
+
+上游要求的工具链是 `clang-2100.1.1.101`、SDK 26.5、linker 1267。不用装 Xcode，也不用 Apple ID：
+苹果公开的软件更新目录里有 “Command Line Tools for Xcode 26.6”（产品号 `140-17812`），实测这三项完全一致。
+
+```bash
+# 1. 在更新目录里找到产品 140-17812 的两个包：CLTools_Executables_Universal.pkg（约 740MB）和 CLTools_macOSNMOS_SDK.pkg（约 59MB）
+curl -s 'https://swscan.apple.com/content/catalogs/others/index-26-15-14-13-12-10.16-10.15-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog.gz' | gunzip | grep -oE 'https://[^<]*140-17812[^<]*(Executables_Universal|macOSNMOS_SDK)\.pkg' | sort -u
+# 2. 下载后先验签，应显示 signed Apple Software
+pkgutil --check-signature CLTools_Executables_Universal.pkg
+# 3. 只解压、不安装，不动系统里现有的命令行工具
+pkgutil --expand-full CLTools_Executables_Universal.pkg x_exec
+pkgutil --expand-full CLTools_macOSNMOS_SDK.pkg x_sdk
+ditto x_exec/Payload/Library/Developer/CommandLineTools work/clt-26.6
+ditto x_sdk/Payload/Library/Developer/CommandLineTools/SDKs work/clt-26.6/SDKs
+```
+
+`xcrun` 不认放在非标准位置的命令行工具（报 `unable to find Xcode installation`），所以上游的
+`tools/build_native_codec.py --developer-dir` 用不了这份解压出来的工具链。直接调用其中的编译器，
+参数与上游 `tools/build_toolchain.py` 的 `compile_command` 完全相同，输出文件名也必须相同（文件名会进签名）：
+
+```bash
+F=/Applications/VideoFusion-macOS.app/Contents/Frameworks
+mkdir -p work/codec-build-manual
+env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin LC_ALL=C work/clt-26.6/usr/bin/clang++ -std=c++17 -arch arm64 -O2 \
+  -isysroot "$PWD/work/clt-26.6/SDKs/MacOSX26.5.sdk" -mmacosx-version-min=26.0 bridge/jy14_codec.cpp \
+  -L"$F" -lvideoeditor -Wl,-rpath,"$F" -o work/codec-build-manual/jy14_codec_hardened_11_4
+shasum -a 256 work/codec-build-manual/jy14_codec_hardened_11_4    # 应为 b6533eb5…f971d
+install -m 0700 work/codec-build-manual/jy14_codec_hardened_11_4 bridge/
+```
+
+实测（macOS 26.4.1 主机）：产物哈希 `b6533eb5eb1eea58dfa74fb1d16d3bb580970fe881f587605d358af1745f971d`，与上游固定值逐字节一致，
+没有改任何固定哈希。之后 `doctor` 返回 `runtime_hashes_verified: true`，`tools/start_here.py build` 返回 `build-verified`，
+上游的 `export` 导出 60 / 60 帧。`publish` 还没测（需要先完全退出剪映）。
+
 ### 上游 issue / PR 在 lite 方案下的情况
 
 | 上游 issue / PR | lite 方案的情况 | 依据 |
 | --- | --- | --- |
-| #2 codec 哈希复现不了，PR #4 | 不涉及 | 不编译 codec，明文草稿不需要加解密 |
+| #2 codec 哈希复现不了，PR #4 | lite 不涉及；要用上游原版命令时已能复现 | 不装 Xcode 也能编出固定哈希，见“要用上游原版命令时：编译 codec” |
 | #3 同版本号但库哈希不符 | 遇到了，已解决 | arm64 包里的库就是 `a282bd76…`，换成通用版 build 13199 后哈希对上 |
 | #5 `publish` 的 `com.apple.macl` 问题，PR #14 | 不涉及 | 草稿直接放进剪映草稿目录，首页能认出来，不走 `publish` |
 | #8 找不到旧版安装包 | 已解决 | 官方 CDN 上旧版还在，命名规则见上一小节 |
