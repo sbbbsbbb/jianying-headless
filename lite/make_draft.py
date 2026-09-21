@@ -15,6 +15,15 @@ from pyJianYingDraft import SEC, trange
 ROOT = Path(__file__).resolve().parent.parent
 DRAFTS = ROOT / 'work' / 'lite' / 'drafts'
 JIANYING_ROOT = Path.home() / 'Movies/JianyingPro/User Data/Projects/com.lveditor.draft'
+FPS = 30
+
+
+def frames_to_us(frames: int) -> int:
+    """帧数转微秒，向下取整（剪映自己也是这样记的）。
+
+    引擎按总时长向上取整出帧：四舍五入多出的不到 1 微秒就会让成片多一帧（实测 1652 帧的时间线导出 1653 帧）。
+    """
+    return frames * SEC // FPS
 
 
 def probe(video: Path):
@@ -29,13 +38,13 @@ def build(name: str, video: Path, out_root: Path, subtitle: str) -> Path:
     """在 out_root/name 生成草稿，返回草稿目录。素材复制进草稿目录，草稿可整体搬走。"""
     out_root.mkdir(parents=True, exist_ok=True)
     width, height, seconds = probe(video)
-    script = draft.DraftFolder(str(out_root)).create_draft(name, width, height, fps=30, allow_replace=True)
+    script = draft.DraftFolder(str(out_root)).create_draft(name, width, height, fps=FPS, allow_replace=True)
     target = out_root / name
     media = target / 'materials' / video.name
     media.parent.mkdir(exist_ok=True)
     shutil.copy2(video, media)
 
-    duration = int(seconds * SEC)
+    duration = frames_to_us(int(seconds * FPS))
     video_track = script.append_track(draft.TrackSpec(draft.TrackType.video))
     script.add_segment(draft.VideoSegment(str(media), trange(0, duration)), video_track)
     if subtitle:

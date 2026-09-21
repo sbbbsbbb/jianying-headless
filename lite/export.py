@@ -5,6 +5,7 @@
 """
 import copy
 import json
+import math
 import subprocess
 import time
 import uuid
@@ -88,7 +89,7 @@ def export(draft: Path) -> Path:
         ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_frames',
          '-show_entries', 'stream=nb_read_frames', '-of', 'json', str(output)]))
     frames = int(probe['streams'][0]['nb_read_frames'])
-    expected = round(timeline['duration'] / 1_000_000 * fps)
+    expected = math.ceil(timeline['duration'] * fps / 1_000_000)  # 引擎按总时长向上取整出帧，三组实测一致
     if frames != expected:
         raise RuntimeError(f'帧数不对: {frames}，应为 {expected}')
     subprocess.run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(output), '-f', 'null', '-'], check=True)
