@@ -12,6 +12,111 @@
 项目适用于 AI 视频工作流的工程交接、批量草稿生成和 Agent 辅助剪辑。
 提供 Python 命令行入口及配套 Agent Skill。它不是剪映官方 SDK，运行时需要安装匹配版本的剪映。
 
+## 本 fork 的补充：lite 拼装方案
+
+> 这一节和 `lite/` 目录是本 fork 新增的，上游的代码和固定哈希一行没动，`tools/check_package.py` 与 `tests/` 照常通过。
+> 以下结论都来自一台机器的实测（Apple Silicon，macOS 26.4.1，CLT 26.4.1 / `clang-2100.0.123.102`，剪映 11.5.0 通用版），不代表其他环境。
+> 许可沿用上游 [LICENSE](LICENSE)：仅限个人学习和非商业使用。
+
+### 思路
+
+上游卡住多数人的是草稿加解密 codec 的固定哈希（#2、#3），以及 `publish` 登记首页（#5）。实测这两步都可以不要：
+
+1. **草稿用明文。** 用 [pyJianYingDraft](https://github.com/GuanYixuan/pyJianYingDraft) 生成时间线，主文件写成明文的 `draft_info.json`。
+   剪映 11.5.0 能直接打开，打开后自己补齐 `Timelines/`、备份等结构，改写后的文件仍是明文 JSON。
+2. **首页不用登记。** 把草稿文件夹放进 `~/Movies/JianyingPro/User Data/Projects/com.lveditor.draft/`，回到剪映首页就出现，不用重启。
+3. **导出只用 `engine/native_export.cpp`。** 它读的是明文时间线 JSON，不经过 codec；编译产物上游只记录不校验，本机任意版本的 clang 都能编。
+   它仍然只认 `libvideoeditor.dylib` 哈希匹配的剪映，这一条绕不开，见下一小节。
+
+同一份明文草稿，既能在剪映界面里继续编辑，也能无界面导出成 MP4。
+
+### 用法
+
+```bash
+pip install pyJianYingDraft==0.3.0
+python3 lite/make_draft.py   # 交互式：拖入视频、填字幕、选生成到 work/lite/drafts 还是剪映草稿目录
+python3 lite/export.py       # 选 work/lite/drafts 下的草稿，导出到 work/lite/exports/<名字-时间>/render.mp4
+```
+
+要导出的草稿，素材必须在 `work/lite/` 内：导出跑在沙箱里，禁网络，禁读用户目录的其他位置。
+
+### 装哪一版剪映（#3、#8 的答案）
+
+同样叫 11.5.0，官方有几种打包，里面的 `libvideoeditor.dylib` 不一样。上游支持的 `2041482a…` 在**通用版**里；
+arm64 单架构包里是 #3 报告的那份 `a282bd76…`。
+
+| 版本 | build | 打包 | `libvideoeditor.dylib` SHA-256 | 上游是否支持 |
+| --- | --- | --- | --- | --- |
+| 11.5.0 | 13199 | 通用（x86_64 + arm64） | `2041482a1aaeffa4d8bd69b836f8cf38807aaad8021bca410d567c59af3bccfa` | 支持（已实测） |
+| 11.5.0 | 13201 | arm64 | `a282bd763e1a396963d1c913ce75d3e2fdaf5b7fe9c7455a65bf1bf40deed019` | 不支持（已实测） |
+| 11.5.0 | 13191 | 通用 | 未下载 | 未知 |
+| 11.5.0 | 13200 | x86_64 | 未下载 | 未知 |
+| 11.4.2 | 13174 | arm64 | 未下载 | 未知 |
+| 11.5.3 | 13237 | arm64，官方当前正式版（2026-09-21） | 未下载 | 不支持 |
+
+官方 CDN 上旧版安装包都还在，知道 build 号就能下：
+
+```text
+https://lf3-package.vlabstatic.com/obj/faceu-packages/Jianying_<主>_<次>_<补>_<build>_jianyingpro_0[_arm64|_x86_64]_creatortool_nosandbox.dmg
+```
+
+不带架构的是通用版。上游支持的那一版：
+
+```text
+https://lf3-package.vlabstatic.com/obj/faceu-packages/Jianying_11_5_0_13199_jianyingpro_0_creatortool_nosandbox.dmg
+```
+
+下载后先核对再安装：
+
+```bash
+codesign --verify --deep --strict /Volumes/*/VideoFusion-macOS.app          # TeamIdentifier 应为 X2JNK7LY8J
+shasum -a 256 /Volumes/*/VideoFusion-macOS.app/Contents/Frameworks/libvideoeditor.dylib
+```
+
+官方引导安装器装的永远是当前正式版（现在是 11.5.3），装完上游就不认了。它查询版本用的接口如下，返回里的
+`installer_downloader_config.url` 就是当前正式版安装包地址：
+
+```text
+https://lv-api.ulikecam.com/service/settings/v3/?app=1&aid=572943&arch_info=arm64&device_id=1&device_platform=mac&from_aid=572943&from_channel=jianyingpro_0&from_version=0.0.0&local_info=zh_CN&version_code=0.0.0
+```
+
+装好后在剪映设置里关掉自动更新，并留一份 dmg，被更新了就重装。
+
+### 上游 issue / PR 在 lite 方案下的情况
+
+| 上游 issue / PR | lite 方案的情况 | 依据 |
+| --- | --- | --- |
+| #2 codec 哈希复现不了，PR #4 | 不涉及 | 不编译 codec，明文草稿不需要加解密 |
+| #3 同版本号但库哈希不符 | 遇到了，已解决 | arm64 包里的库就是 `a282bd76…`，换成通用版 build 13199 后哈希对上 |
+| #5 `publish` 的 `com.apple.macl` 问题，PR #14 | 不涉及 | 草稿直接放进剪映草稿目录，首页能认出来，不走 `publish` |
+| #8 找不到旧版安装包 | 已解决 | 官方 CDN 上旧版还在，命名规则见上一小节 |
+| #9 后半 / PR #10 后半：只有 X 位置关键帧时 Y 抖动 | 复现了，已修 | 见下一小节 |
+| #9 前半 / PR #10 前半：保存后回读校验误报 | 不涉及 | lite 没有“剪映保存后再校验”这一步 |
+| #11① 中文路径导出失败，PR #13 | 已处理，已实测 | 沙箱策略按 UTF-8 原样写路径；用中文草稿名实际导出成功 |
+| #11② MP4 重复 brand 被拒 | 不涉及，本机也没出现 | 本机成片 `major_brand=isom` 是单值，lite 不校验 brand |
+| #6 / PR #7 本地字体 | 没移植，没测 | 上游实现在它自己的 Python 引擎里，lite 用的是 pyJianYingDraft |
+| PR #12 11.5.3-beta2、PR #1 Windows 后端 | 不涉及 | |
+
+### #9 的 Y 抖动：复现数据和修法
+
+测试片段：720p 画布，画面缩放 0.3，静态 `transform_y = 0.5`，X 位置关键帧 0 秒 −0.5、2 秒 0.5。逐帧量非黑区域的垂直中心：
+
+| 情形 | Y 中心（像素） | 跨度 |
+| --- | --- | --- |
+| 没有关键帧（对照） | 恒为 178 | 0 |
+| 只有 X 关键帧 | 178、538 逐帧交替 | 360 |
+| X 关键帧 + 恒定 Y 关键帧 | 恒为 178 | 0 |
+| 只有 Y 关键帧、静态 X 非零（反向对照，量 X 中心） | 恒为 958 | 0 |
+
+所以只有“只有 X 关键帧”这一个方向会抖。`lite/export.py` 的 `pin_static_y` 在导出用的时间线副本里，
+给这种片段补一条取值等于静态 Y 的恒定 Y 关键帧，草稿本身不动。修复后只有 X 关键帧的片段 Y 跨度为 0，
+X 动画照常（中心 318 → 638 → 958 后停住），120 / 120 帧。思路与 PR #10 一致。
+
+### 没测的
+
+转场、特效、蒙版、复合片段、图片和 GIF 素材、本地字体、音频轨，lite 方案下都没验证。
+上游记录过图片和 GIF 偶发少一帧，`lite/export.py` 的帧数校验要求完全相等，少帧会直接报错。
+
 ## 核心功能
 
 | 功能 | 支持范围 |
